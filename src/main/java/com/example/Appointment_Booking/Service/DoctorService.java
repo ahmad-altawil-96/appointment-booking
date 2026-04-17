@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -26,7 +27,7 @@ public class DoctorService {
     private final UserRepository userRepository;
 
     public Map<String, List<LocalTime>> generateDoctorSchedule(String email) {
-        Map<String, List<LocalTime>> doctorSchedule = new HashMap<>();
+        Map<String, List<LocalTime>> doctorSchedule = new LinkedHashMap<>();
         User doctor = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("Doctor not found"));
         LocalDate date = LocalDate.now();
@@ -86,11 +87,7 @@ public class DoctorService {
                                    LocalTime breakEnd,
                                    Integer slotDuration) {
         List<LocalTime> timeList = generateSlots(startTime, endTime, breakStart, breakEnd, slotDuration);
-        List<Appointment> bookedAppointments = appointmentRepository
-                .findByDoctorIdAndAppointmentTimeBetween(doctorId, date.atStartOfDay(), date.atTime(23, 59));
-        List<LocalTime> bookedTime = bookedAppointments.stream()
-                .map(a -> a.getAppointmentTime().toLocalTime()).toList();
-        timeList.removeIf(bookedTime::contains);
+
         String dayKey = date.format(DateTimeFormatter.ofPattern("EEEE dd.MM.yyyy", Locale.GERMAN));
         doctorSchedule.put(dayKey, timeList);
     }
@@ -146,23 +143,27 @@ public class DoctorService {
                 .orElseThrow(() -> new RuntimeException("Doctor not found"));
         User patient = userRepository.findByEmail(appointmentRequest.getPatientEmail())
                 .orElseThrow(() -> new RuntimeException("Patient not found"));
-        boolean isBooked = appointmentRepository
-                .findByDoctorIdAndAppointmentTimeBetween(
-                        doctor.getId(),
-                        appointmentRequest.getAppointmentTime().minusMinutes(1),
-                        appointmentRequest.getAppointmentTime().plusMinutes(1)
-                ).stream()
-                .anyMatch(a -> a.getStatus() == Status.CONFIRMED);
+        Map<String, List<LocalTime>> available = getAvailableSlots(email);
 
-        if (isBooked) {
-            throw new RuntimeException("This slot is already booked");
+        LocalDateTime requested = appointmentRequest.getAppointmentTime();
+
+        String key = requested.format(DateTimeFormatter.ofPattern("EEEE dd.MM.yyyy", Locale.GERMAN));
+
+        if (!available.containsKey(key) ||
+                !available.get(key).contains(requested.toLocalTime())) {
+
+            throw new RuntimeException("Invalid or unavailable slot");
         }
         Appointment appointment = new Appointment();
         appointment.setDoctor(doctor);
         appointment.setAppointmentTime(appointmentRequest.getAppointmentTime());
         appointment.setPatient(patient);
         appointment.setStatus(Status.CONFIRMED);
-        appointmentRepository.save(appointment);
+        try {
+            appointmentRepository.save(appointment);
+        } catch (Exception e) {
+            throw new RuntimeException("Slot already booked");
+        }
         return appointment;
     }
     public Appointment cancelAppointment(Long appointmentId, String email) {
@@ -174,7 +175,13 @@ public class DoctorService {
         if (!appointment.getDoctor().getId().equals(doctor.getId())) {
             throw new RuntimeException("Unauthorized");
         }
+        if (appointment.getStatus() == Status.CANCELLED) {
+            throw new RuntimeException("Appointment already cancelled");
+        }
 
+        if (appointment.getAppointmentTime().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("Cannot cancel past appointment");
+        }
         appointment.setStatus(Status.CANCELLED);
         appointmentRepository.save(appointment);
         return appointment;
@@ -183,6 +190,28 @@ public class DoctorService {
     public Appointment updateAppointment(Long appointmentId, String email, AppointmentRequest appointmentRequest) {
         cancelAppointment(appointmentId, email);
       return addAppointment(email, appointmentRequest);
+    }
+
+    public Map<String, List<LocalTime>> getAvailableSlots(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Map<String, List<LocalTime>> slots = generateDoctorSchedule(user.getEmail());
+
+        List<Appointment> bookedAppointments =
+                appointmentRepository.findByDoctorIdAndStatus(user.getId(), Status.CONFIRMED);
+
+        for (Appointment appt : bookedAppointments) {
+            String key = appt.getAppointmentTime()
+                    .format(DateTimeFormatter.ofPattern("EEEE dd.MM.yyyy", Locale.GERMAN));
+
+            LocalTime time = appt.getAppointmentTime().toLocalTime();
+
+            if (slots.containsKey(key)) {
+                slots.get(key).remove(time);
+            }
+        }
+        return slots;
     }
 
 }

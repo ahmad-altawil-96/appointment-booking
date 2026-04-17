@@ -24,6 +24,13 @@ public class Adminservice {
     }
 
     public List<UserResponse> findAllByRole(Role role) {
+        if  (role == null) {
+            return userRepository.findAll().stream().map(user -> new UserResponse(
+                    user.getFirstName(),
+                    user.getLastName(),
+                    user.getEmail(),
+                    user.getRole())).toList();
+        }
         return userRepository.findByRole(role).stream()
                 .map(user -> new UserResponse(
                         user.getFirstName(),

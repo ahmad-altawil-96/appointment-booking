@@ -25,7 +25,7 @@ public class AdminController {
     }
 
     @GetMapping("/userlist")
-    public List<UserResponse> getAllUsers(Role role) {
+    public List<UserResponse> getAllUsers(@RequestParam(required = false)Role role) {
         return adminservice.findAllByRole(role);
     }
 }

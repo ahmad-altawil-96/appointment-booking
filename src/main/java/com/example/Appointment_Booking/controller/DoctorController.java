@@ -64,4 +64,10 @@ public class DoctorController {
         return doctorService.updateAppointment(appointmentId,email,request);
     }
 
+    @GetMapping("/slots/available")
+    public Map<String, List<LocalTime>> getAvailableSlots(Authentication authentication) {
+        String email = authentication.getName();
+        return doctorService.getAvailableSlots(email);
+    }
+
 }
